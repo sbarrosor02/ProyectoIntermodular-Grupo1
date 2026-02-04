@@ -1,0 +1,9 @@
+# Repositorio extra para soporte CUDA 12.1 (Máxima compatibilidad RTX)
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+# Librerías principales
+opencv-python
+ultralytics
+torch
+torchvision
+psycopg2-binary

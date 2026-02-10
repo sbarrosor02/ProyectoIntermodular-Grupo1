@@ -5,20 +5,26 @@ import torch
 import psycopg2
 from datetime import datetime
 import time
+import os
 
 # Configuración
 print("Programa Funcionando")
 
 CAMERA_INDEX = 0  # 0 para webcam integrada, 1 para externa
 CONFIDENCE_THRESHOLD = 0.5 # Solo mostrar detecciones con >50% de probabilidad
-SEND_INTERVAL = 300  # Segundos (5 minutos)
+SEND_INTERVAL = 10  # Segundos (para pruebas rápidas)
+SAVE_PATH = "capturas"
+
+# Crear carpeta de capturas si no existe
+if not os.path.exists(SAVE_PATH):
+    os.makedirs(SAVE_PATH)
 
 # --- CONFIGURACIÓN BASE DE DATOS (¡EDITAR ESTO!) ---
 DB_CONFIG = {
     "host": "localhost",
-    "database": "tu_base_de_datos",
+    "database": "monitor_aula",
     "user": "postgres",
-    "password": "tu_password",
+    "password": "password123!",
     "port": "5432"
 }
 
@@ -31,7 +37,8 @@ def init_db():
             CREATE TABLE IF NOT EXISTS ocupacion_aula (
                 id SERIAL PRIMARY KEY,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                cantidad_personas INTEGER
+                cantidad_personas INTEGER,
+                foto_path TEXT
             );
         """)
         conn.commit()
@@ -40,21 +47,27 @@ def init_db():
         print("Base de datos verificada/inicializada correctamente.")
     except Exception as e:
         print(f"Error al conectar con la base de datos: {e}")
-        print("Asegúrate de haber creado la base de datos y configurado las credenciales en el script.")
 
-def save_to_db(count):
-    """Guarda el conteo en la base de datos."""
+def save_to_db(count, frame):
+    """Guarda el conteo y la imagen en el disco y la BD."""
     try:
+        # 1. Guardar la imagen en disco
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"detect_{timestamp_str}.jpg"
+        filepath = os.path.join(SAVE_PATH, filename)
+        cv2.imwrite(filepath, frame)
+
+        # 2. Guardar registro en BD
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
-        query = "INSERT INTO ocupacion_aula (cantidad_personas, timestamp) VALUES (%s, %s)"
-        cur.execute(query, (count, datetime.now()))
+        query = "INSERT INTO ocupacion_aula (cantidad_personas, timestamp, foto_path) VALUES (%s, %s, %s)"
+        cur.execute(query, (count, datetime.now(), filepath))
         conn.commit()
         cur.close()
         conn.close()
-        print(f"\n[BD] Guardado registro: {count} personas a las {datetime.now().strftime('%H:%M:%S')}")
+        print(f"\n[BD] Guardado registro: {count} personas y foto en {filepath}")
     except Exception as e:
-        print(f"\n[Error BD] No se pudo guardar el dato: {e}")
+        print(f"\n[Error BD/Disco] No se pudo guardar el dato: {e}")
 
 def main():
     # Selección de dispositivo (GPU si está disponible, si no CPU)
@@ -87,7 +100,7 @@ def main():
 
     print(f"Iniciando detección... Presiona 'q' en la ventana de video para salir.")
 
-    last_sent_time = time.time() # Marca de tiempo inicial
+    last_sent_time = 0 # Forzar captura inmediata al arrancar
 
     while True:
         ret, frame = cap.read()
@@ -116,7 +129,7 @@ def main():
             # --- LOGICA DE ENVIO A BASE DE DATOS ---
             current_time = time.time()
             if current_time - last_sent_time >= SEND_INTERVAL:
-                save_to_db(num_personas)
+                save_to_db(num_personas, annotated_frame)
                 last_sent_time = current_time
             # ---------------------------------------
 

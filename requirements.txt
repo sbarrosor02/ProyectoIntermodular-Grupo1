@@ -7,3 +7,8 @@ ultralytics
 torch
 torchvision
 psycopg2-binary
+
+# Dashboard
+streamlit
+pandas
+plotly

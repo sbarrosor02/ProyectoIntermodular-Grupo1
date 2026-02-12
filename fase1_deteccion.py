@@ -1,3 +1,4 @@
+import threading
 import cv2
 from ultralytics import YOLO
 import sys
@@ -13,11 +14,6 @@ print("Programa Funcionando")
 CAMERA_INDEX = 0  # 0 para webcam integrada, 1 para externa
 CONFIDENCE_THRESHOLD = 0.5 # Solo mostrar detecciones con >50% de probabilidad
 SEND_INTERVAL = 10  # Segundos (para pruebas rápidas)
-SAVE_PATH = "capturas"
-
-# Crear carpeta de capturas si no existe
-if not os.path.exists(SAVE_PATH):
-    os.makedirs(SAVE_PATH)
 
 # --- CONFIGURACIÓN BASE DE DATOS (¡EDITAR ESTO!) ---
 DB_CONFIG = {
@@ -33,13 +29,23 @@ def init_db():
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
+        # Modificamos la tabla para usar BYTEA para los datos de la imagen en lugar de una ruta de texto
         cur.execute("""
             CREATE TABLE IF NOT EXISTS ocupacion_aula (
                 id SERIAL PRIMARY KEY,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 cantidad_personas INTEGER,
-                foto_path TEXT
+                foto_data BYTEA
             );
+        """)
+        # Comprobar si la columna 'foto_path' existe y eliminarla si es necesario
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='ocupacion_aula' AND column_name='foto_path') THEN
+                    ALTER TABLE ocupacion_aula DROP COLUMN foto_path;
+                END IF;
+            END $$;
         """)
         conn.commit()
         cur.close()
@@ -49,30 +55,37 @@ def init_db():
         print(f"Error al conectar con la base de datos: {e}")
 
 def save_to_db(count, frame):
-    """Guarda el conteo y la imagen en el disco y la BD."""
+    """Guarda el conteo y los bytes de la imagen directamente en la BD."""
     try:
-        # 1. Guardar la imagen en disco
-        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"detect_{timestamp_str}.jpg"
-        filepath = os.path.join(SAVE_PATH, filename)
-        cv2.imwrite(filepath, frame)
+        # 1. Codificar la imagen a formato JPG en memoria
+        success, encoded_image = cv2.imencode('.jpg', frame)
+        if not success:
+            print("\n[Error] No se pudo codificar la imagen a JPG.")
+            return
+        
+        image_bytes = encoded_image.tobytes()
 
-        # 2. Guardar registro en BD
+        # 2. Guardar registro y bytes de la imagen en BD
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
-        query = "INSERT INTO ocupacion_aula (cantidad_personas, timestamp, foto_path) VALUES (%s, %s, %s)"
-        cur.execute(query, (count, datetime.now(), filepath))
+        query = "INSERT INTO ocupacion_aula (cantidad_personas, timestamp, foto_data) VALUES (%s, %s, %s)"
+        # psycopg2 convierte automáticamente el objeto 'bytes' de Python a BYTEA de PostgreSQL
+        cur.execute(query, (count, datetime.now(), image_bytes))
         conn.commit()
         cur.close()
         conn.close()
-        print(f"\n[BD] Guardado registro: {count} personas y foto en {filepath}")
+        print(f"\n[BD] Guardado registro: {count} personas y la imagen en la base de datos.")
     except Exception as e:
-        print(f"\n[Error BD/Disco] No se pudo guardar el dato: {e}")
+        print(f"\n[Error BD] No se pudo guardar el dato: {e}")
 
 def main():
     # Selección de dispositivo (GPU si está disponible, si no CPU)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Cargando modelo en: {device.upper()}")
+    if device == 'cuda':
+        print(f"CUDA está disponible. Usando GPU: {torch.cuda.get_device_name(0)}")
+    else:
+        print("CUDA no está disponible. Usando CPU.")
 
     # Intentar inicializar la BD al arranque
     init_db()
@@ -87,6 +100,13 @@ def main():
 
     # Inicializamos la captura de video
     cap = cv2.VideoCapture(CAMERA_INDEX)
+
+    # --- OPTIMIZACIÓN: Establecer una resolución más baja ---
+    # Forzamos la captura a 1280x720 para reducir la carga de la CPU/GPU.
+    # Esto previene "congelamientos" al procesar video de alta resolución por defecto.
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    # ----------------------------------------------------
 
     if not cap.isOpened():
         print(f"Error: No se pudo acceder a la cámara con índice {CAMERA_INDEX}.")
@@ -110,7 +130,7 @@ def main():
 
         # Detección
         # stream=True hace que use un generador, más eficiente para video
-        results = model(frame, conf=CONFIDENCE_THRESHOLD, classes=[0], verbose=False, stream=True)
+        results = model(frame, conf=CONFIDENCE_THRESHOLD, classes=[0], verbose=False, stream=True, device=device)
 
         # Procesamos los resultados (como stream=True, iteramos)
         for result in results:
@@ -129,7 +149,10 @@ def main():
             # --- LOGICA DE ENVIO A BASE DE DATOS ---
             current_time = time.time()
             if current_time - last_sent_time >= SEND_INTERVAL:
-                save_to_db(num_personas, annotated_frame)
+                # Ejecutar la operación de guardado en un hilo separado para no bloquear el bucle principal
+                save_thread = threading.Thread(target=save_to_db, args=(num_personas, annotated_frame.copy()))
+                save_thread.daemon = True # Permite que el programa se cierre aunque el hilo esté activo
+                save_thread.start()
                 last_sent_time = current_time
             # ---------------------------------------
 

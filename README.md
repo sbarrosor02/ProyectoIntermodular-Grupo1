@@ -1,66 +1,123 @@
-# Proyecto Intermodular - Grupo 1: Sistema de Detección y Análisis IA
+# Proyecto Intermodular - Grupo 1: Monitor de Ocupación de Aula con IA
 
-Este proyecto implementa un sistema de detección y análisis basado en inteligencia artificial, utilizando el modelo YOLOv8 para la detección de objetos y un dashboard interactivo para la visualización de datos.
+Sistema de detección de personas en tiempo real mediante YOLOv8 y cámara web, con almacenamiento automático en base de datos PostgreSQL y visualización en un dashboard web interactivo.
 
-## Estructura del Proyecto
+## Descripción
 
-- `fase1_deteccion.py`: Script principal para la detección de objetos en tiempo real o a partir de fuentes de video/imagen usando YOLOv8.
-- `fase2_dashboard.py`: Aplicación Streamlit para visualizar y analizar los resultados de la detección.
-- `verificar_datos.py`: Script para la verificación y preprocesamiento de datos (posiblemente para el entrenamiento o la validación del modelo).
-- `yolov8n.pt`: El modelo YOLOv8 nano pre-entrenado utilizado para la detección.
-- `requirements.txt`: Lista de dependencias de Python necesarias para ejecutar el proyecto.
-- `capturas/`: Directorio para almacenar imágenes o videos capturados durante el proceso de detección.
+El sistema consta de dos componentes que funcionan en paralelo:
+
+- **`fase1_deteccion.py`**: Captura video de la cámara, detecta personas con YOLOv8 y guarda el conteo en la base de datos cada 60 segundos.
+- **`fase2_dashboard.py`**: Dashboard web (Streamlit) que muestra la ocupación en tiempo real con gráficas y métricas, actualizándose automáticamente cada 60 segundos.
+
+## Requisitos previos
+
+- Python 3.9 – 3.11
+- PostgreSQL instalado y en ejecución
+- Cámara web conectada al equipo
+- (Opcional) GPU NVIDIA con CUDA 12.1 para mayor rendimiento
 
 ## Instalación
 
-Para configurar el entorno de desarrollo y ejecutar el proyecto, sigue los siguientes pasos:
+### 1. Clonar el repositorio
 
-1.  **Clonar el repositorio:**
-    ```bash
-    git clone <URL_DEL_REPOSITORIO>
-    cd ProyectoIntermodular-Grupo1
-    ```
+```bash
+git clone https://github.com/sbarrosor02/ProyectoIntermodular-Grupo1.git
+cd ProyectoIntermodular-Grupo1
+```
 
-2.  **Crear y activar un entorno virtual (recomendado):**
-    ```bash
-    python -m venv venv
-    # En Windows
-    .\venv\Scripts\activate
-    # En macOS/Linux
-    source venv/bin/activate
-    ```
+### 2. Crear y activar un entorno virtual
 
-3.  **Instalar las dependencias:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+```bash
+python -m venv venv
+
+# Windows
+.\venv\Scripts\activate
+
+# macOS / Linux
+source venv/bin/activate
+```
+
+### 3. Instalar dependencias
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Configurar la base de datos
+
+Asegúrate de que PostgreSQL está en ejecución. Luego abre `fase1_deteccion.py` y `fase2_dashboard.py` y edita el bloque `DB_CONFIG` con tus credenciales:
+
+```python
+DB_CONFIG = {
+    "host": "localhost",
+    "database": "monitor_aula",
+    "user": "postgres",
+    "password": "TU_CONTRASEÑA",
+    "port": "5432"
+}
+```
+
+La base de datos y la tabla se crean automáticamente al lanzar `fase1_deteccion.py` por primera vez. Solo necesitas que el servidor PostgreSQL esté activo y que el usuario tenga permisos para crear bases de datos (o crearla manualmente con `CREATE DATABASE monitor_aula;`).
 
 ## Uso
 
-### Fase 1: Detección con IA
+Necesitas **dos terminales abiertas** simultáneamente.
 
-Para iniciar el sistema de detección, ejecuta el siguiente script:
+### Terminal 1 — Detección con cámara
 
 ```bash
 python fase1_deteccion.py
 ```
 
-Este script activará la cámara (si está configurada) o procesará la fuente de entrada especificada, mostrando las detecciones en tiempo real.
+- Se abre una ventana con el video de la cámara y las detecciones en tiempo real
+- El conteo de personas se guarda en la base de datos cada 60 segundos
+- Pulsa `q` en la ventana de video para cerrar el programa
 
-### Fase 2: Dashboard de Análisis
-
-Una vez que tengas datos de detección, puedes iniciar el dashboard para visualizarlos:
+### Terminal 2 — Dashboard web
 
 ```bash
 streamlit run fase2_dashboard.py
 ```
 
-Esto abrirá una aplicación web interactiva en tu navegador donde podrás explorar los resultados de la detección.
+- Se abre el navegador automáticamente en `http://localhost:8501`
+- El dashboard se actualiza solo cada 60 segundos
+- Desde la barra lateral puedes desactivar el auto-refresco o actualizarlo manualmente
 
-## Contribución
+## Estructura del proyecto
 
-¡Las contribuciones son bienvenidas! Si deseas mejorar este proyecto, por favor, haz un fork del repositorio y envía tus pull requests.
+```
+ProyectoIntermodular-Grupo1/
+├── fase1_deteccion.py      # Detección YOLOv8 + guardado en BD
+├── fase2_dashboard.py      # Dashboard web con Streamlit
+├── verificar_datos.py      # Utilidad para consultar los últimos registros en BD
+├── yolov8n.pt              # Modelo YOLOv8 nano preentrenado
+├── requirements.txt        # Dependencias del proyecto
+└── README.md
+```
 
-## Licencia
+## Solución de problemas
 
-Este proyecto está bajo la Licencia MIT. Consulta el archivo `LICENSE` para más detalles.
+| Error | Solución |
+|---|---|
+| `Error al conectar con la BD` | Comprueba que PostgreSQL está activo y que la contraseña en `DB_CONFIG` es correcta |
+| `No se pudo acceder a la cámara` | Cambia `CAMERA_INDEX = 0` a `1` o `2` en `fase1_deteccion.py` |
+| `No hay datos en la base de datos` | Es normal al inicio — espera al primer guardado (60 segundos) |
+| Error al instalar `torch` | Verifica que tienes Python 3.9–3.11 y pip actualizado (`pip install --upgrade pip`) |
+| El dashboard no abre el navegador | Abre manualmente `http://localhost:8501` |
+
+## Verificar datos en la BD
+
+Para comprobar los últimos registros guardados sin abrir el dashboard:
+
+```bash
+python verificar_datos.py
+```
+
+## Tecnologías utilizadas
+
+- [YOLOv8 (Ultralytics)](https://github.com/ultralytics/ultralytics) — Detección de personas
+- [OpenCV](https://opencv.org/) — Captura y procesamiento de video
+- [PyTorch](https://pytorch.org/) — Backend de inferencia (CPU/GPU)
+- [PostgreSQL](https://www.postgresql.org/) — Base de datos
+- [Streamlit](https://streamlit.io/) — Dashboard web
+- [Plotly](https://plotly.com/) — Gráficas interactivas

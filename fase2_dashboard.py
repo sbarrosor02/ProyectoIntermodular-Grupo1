@@ -3,7 +3,7 @@ import pandas as pd
 import psycopg2
 import plotly.express as px
 from datetime import datetime
-import os
+import time
 
 # Configuración de la página
 st.set_page_config(page_title="Monitor de Aula", layout="wide", page_icon="📊")
@@ -20,7 +20,7 @@ DB_CONFIG = {
 def get_data():
     try:
         conn = psycopg2.connect(**DB_CONFIG)
-        query = "SELECT id, timestamp, cantidad_personas, foto_path FROM ocupacion_aula ORDER BY timestamp DESC"
+        query = "SELECT id, timestamp, cantidad_personas FROM ocupacion_aula ORDER BY timestamp DESC"
         df = pd.read_sql(query, conn)
         conn.close()
         return df
@@ -29,54 +29,74 @@ def get_data():
         return pd.DataFrame()
 
 # Título de la app
-st.title("📊 Monitorización de Aula en Tiempo Real")
-st.markdown("Dashboard para el seguimiento de ocupación mediante IA.")
+st.title("Monitorizacion de Aula en Tiempo Real")
+st.markdown("Dashboard para el seguimiento de ocupacion mediante IA.")
 
-# Botón de refrescar
-if st.button('🔄 Actualizar Datos'):
-    st.rerun()
+# Configuración de auto-refresco en la barra lateral
+with st.sidebar:
+    st.header("Configuracion")
+    auto_refresh = st.checkbox("Auto-refresco (cada 60s)", value=True)
+    if st.button("Actualizar ahora"):
+        st.rerun()
 
 # Obtener datos
 df = get_data()
 
 if not df.empty:
-    # --- FILA 1: MÉTRICAS CLAVE ---
-    col1, col2, col3 = st.columns(3)
-    
-    ultima_ocupacion = df.iloc[0]['cantidad_personas']
+    ultima_ocupacion = int(df.iloc[0]['cantidad_personas'])
     ultima_fecha = df.iloc[0]['timestamp']
-    max_ocupacion = df['cantidad_personas'].max()
+    max_ocupacion = int(df['cantidad_personas'].max())
     promedio = df['cantidad_personas'].mean()
+    total_registros = len(df)
 
-    col1.metric("Ocupación Actual", f"{ultima_ocupacion} pers.")
-    col2.metric("Ocupación Máxima", f"{max_ocupacion} pers.")
-    col3.metric("Promedio Diario", f"{promedio:.1f} pers.")
+    # --- FILA 1: MÉTRICAS CLAVE ---
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Ocupacion Actual", f"{ultima_ocupacion} pers.")
+    col2.metric("Ocupacion Maxima", f"{max_ocupacion} pers.")
+    col3.metric("Promedio", f"{promedio:.1f} pers.")
+    col4.metric("Total registros", total_registros)
 
-    # --- FILA 2: GRÁFICO ---
-    st.subheader("📈 Evolución de la Ocupación")
-    fig = px.line(df, x='timestamp', y='cantidad_personas', 
-                 title='Personas en el aula a lo largo del tiempo',
-                 labels={'timestamp': 'Fecha y Hora', 'cantidad_personas': 'Nº Personas'})
+    st.caption(f"Ultimo dato: {ultima_fecha.strftime('%d/%m/%Y %H:%M:%S') if hasattr(ultima_fecha, 'strftime') else ultima_fecha}")
+
+    # --- FILA 2: GRÁFICO DE LÍNEA ---
+    st.subheader("Evolucion de la Ocupacion")
+    df_grafico = df.sort_values('timestamp')
+    fig = px.line(
+        df_grafico, x='timestamp', y='cantidad_personas',
+        title='Personas en el aula a lo largo del tiempo',
+        labels={'timestamp': 'Fecha y Hora', 'cantidad_personas': 'N Personas'}
+    )
     fig.update_layout(template="plotly_dark")
+    fig.update_traces(line_color='#00d4ff')
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- FILA 3: ÚLTIMAS CAPTURAS ---
-    st.subheader("📷 Últimas capturas de evidencia")
-    
-    # Mostrar las 4 últimas fotos que existan en disco
-    fotos_validas = df[df['foto_path'].apply(lambda x: os.path.exists(x) if x else False)].head(4)
-    
-    if not fotos_validas.empty:
-        cols_fotos = st.columns(len(fotos_validas))
-        for i, (_, row) in enumerate(fotos_validas.iterrows()):
-            with cols_fotos[i]:
-                st.image(row['foto_path'], caption=f"{row['timestamp'].strftime('%H:%M:%S')} - {row['cantidad_personas']} pers.")
-    else:
-        st.info("No hay fotos disponibles todavía en la carpeta /capturas.")
+    # --- FILA 3: GRÁFICO DE BARRAS (últimas 20 lecturas) ---
+    st.subheader("Ultimas 20 lecturas")
+    df_recientes = df.head(20).sort_values('timestamp')
+    fig2 = px.bar(
+        df_recientes, x='timestamp', y='cantidad_personas',
+        labels={'timestamp': 'Hora', 'cantidad_personas': 'Personas'},
+        color='cantidad_personas',
+        color_continuous_scale='RdYlGn_r'
+    )
+    fig2.update_layout(template="plotly_dark", showlegend=False)
+    st.plotly_chart(fig2, use_container_width=True)
 
     # --- FILA 4: TABLA DE DATOS ---
-    with st.expander("📄 Ver historial completo de datos"):
-        st.dataframe(df, use_container_width=True)
+    with st.expander("Ver historial completo de datos"):
+        st.dataframe(
+            df[['id', 'timestamp', 'cantidad_personas']].rename(columns={
+                'id': 'ID',
+                'timestamp': 'Fecha y Hora',
+                'cantidad_personas': 'Personas'
+            }),
+            use_container_width=True
+        )
 
 else:
-    st.warning("No hay datos en la base de datos. Asegúrate de que fase1_deteccion.py esté funcionando.")
+    st.warning("No hay datos en la base de datos. Asegurate de que fase1_deteccion.py este funcionando.")
+
+# Auto-refresco
+if auto_refresh:
+    time.sleep(60)
+    st.rerun()

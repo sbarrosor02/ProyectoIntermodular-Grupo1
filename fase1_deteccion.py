@@ -13,7 +13,7 @@ print("Programa Funcionando")
 
 CAMERA_INDEX = 0  # 0 para webcam integrada, 1 para externa
 CONFIDENCE_THRESHOLD = 0.5 # Solo mostrar detecciones con >50% de probabilidad
-SEND_INTERVAL = 10  # Segundos (para pruebas rápidas)
+SEND_INTERVAL = 60  # Segundos (1 minuto)
 
 # --- CONFIGURACIÓN BASE DE DATOS (¡EDITAR ESTO!) ---
 DB_CONFIG = {
@@ -29,24 +29,23 @@ def init_db():
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
-        # Modificamos la tabla para usar BYTEA para los datos de la imagen en lugar de una ruta de texto
         cur.execute("""
             CREATE TABLE IF NOT EXISTS ocupacion_aula (
                 id SERIAL PRIMARY KEY,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                cantidad_personas INTEGER,
-                foto_data BYTEA
+                cantidad_personas INTEGER
             );
         """)
-        # Comprobar si la columna 'foto_path' existe y eliminarla si es necesario
-        cur.execute("""
-            DO $$
-            BEGIN
-                IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='ocupacion_aula' AND column_name='foto_path') THEN
-                    ALTER TABLE ocupacion_aula DROP COLUMN foto_path;
-                END IF;
-            END $$;
-        """)
+        # Eliminar columnas antiguas si existen (migración)
+        for col in ('foto_path', 'foto_data'):
+            cur.execute(f"""
+                DO $$
+                BEGIN
+                    IF EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='ocupacion_aula' AND column_name='{col}') THEN
+                        ALTER TABLE ocupacion_aula DROP COLUMN {col};
+                    END IF;
+                END $$;
+            """)
         conn.commit()
         cur.close()
         conn.close()
@@ -54,27 +53,19 @@ def init_db():
     except Exception as e:
         print(f"Error al conectar con la base de datos: {e}")
 
-def save_to_db(count, frame):
-    """Guarda el conteo y los bytes de la imagen directamente en la BD."""
+def save_to_db(count):
+    """Guarda el conteo de personas en la BD."""
     try:
-        # 1. Codificar la imagen a formato JPG en memoria
-        success, encoded_image = cv2.imencode('.jpg', frame)
-        if not success:
-            print("\n[Error] No se pudo codificar la imagen a JPG.")
-            return
-        
-        image_bytes = encoded_image.tobytes()
-
-        # 2. Guardar registro y bytes de la imagen en BD
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
-        query = "INSERT INTO ocupacion_aula (cantidad_personas, timestamp, foto_data) VALUES (%s, %s, %s)"
-        # psycopg2 convierte automáticamente el objeto 'bytes' de Python a BYTEA de PostgreSQL
-        cur.execute(query, (count, datetime.now(), image_bytes))
+        cur.execute(
+            "INSERT INTO ocupacion_aula (cantidad_personas, timestamp) VALUES (%s, %s)",
+            (count, datetime.now())
+        )
         conn.commit()
         cur.close()
         conn.close()
-        print(f"\n[BD] Guardado registro: {count} personas y la imagen en la base de datos.")
+        print(f"\n[BD] Guardado registro: {count} personas.")
     except Exception as e:
         print(f"\n[Error BD] No se pudo guardar el dato: {e}")
 
@@ -150,7 +141,7 @@ def main():
             current_time = time.time()
             if current_time - last_sent_time >= SEND_INTERVAL:
                 # Ejecutar la operación de guardado en un hilo separado para no bloquear el bucle principal
-                save_thread = threading.Thread(target=save_to_db, args=(num_personas, annotated_frame.copy()))
+                save_thread = threading.Thread(target=save_to_db, args=(num_personas,))
                 save_thread.daemon = True # Permite que el programa se cierre aunque el hilo esté activo
                 save_thread.start()
                 last_sent_time = current_time
